@@ -1,0 +1,411 @@
+---
+title: "Report 3 Codes"
+output: html_document
+date: "2025-04-07"
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(knitr)
+library(tinytex)
+library(broom)
+
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(out.width = "60%")
+```
+
+# Methods
+
+## Loading and preparing dataset
+
+```{r}
+## Installing/ loading packages. ##
+
+# Loading packages for make_date function.
+  # To install the lubridate package, remove the # before install.packages(...).
+  # After installing package, re-enter # before install.packages(...)
+  # to prevent re-installing the package. 
+#install.packages("lubridate")
+library(lubridate)
+
+# Loading package for inner_join function.
+  # To install the dplyr package, remove the # before install.packages(...).
+  # After installing package, re-enter # before install.packages(...)
+  # to prevent re-installing the package. 
+#install.packages("dplyr")
+library(dplyr)
+
+## Importing space weather (SW) data. ##
+
+# Load SW data from bit.ly link. 
+spaceWeatherData <- "GFZSpaceWeatherData.csv"
+
+# Reads the url as a csv file.
+data <- read.csv(spaceWeatherData, header=FALSE)
+
+# Stores SW data as a data frame and re-names variables. 
+SWData <- as.data.frame(lapply(data[-1, ], as.numeric))
+names(SWData) <- c(data[1,])
+
+# Display first six observations. 
+  # Remove # before head(SWData) to see first six observations. 
+#head(SWData)
+
+
+## Create daily Kp indices. ##
+
+# Gets the mean of the values from row eight to 15 and store it as
+# a new variable named Kp.
+SWData$Kp <- rowMeans(SWData[, 8:15])
+
+# Multiply Kp by three, round it to the nearest whole number, and 
+# divide it by three. 
+SWData$Kp <- round(SWData$Kp * 3) / 3
+
+# Display Kp variable.
+  # Remove # before SWData$Kp to view the variable. 
+#SWData$Kp
+
+
+## Create ADATE Column. ##
+
+# Convert YYY, MM, and DD from SWData into year-month-date in UTC.
+# Then, convert the date to a numeric value by removing the dashes (-).  
+SWData$ADATE<-as.numeric(format(make_date(SWData[,1],
+                                          SWData[,2],SWData[,3]),"%Y%m%d"))
+
+# Display ADATE varaible.
+  # Remove # before SWData$ADATE to view the variable. 
+#SWData$ADATE
+
+## Loading anomaly data. ##
+
+# Load anomaly data from bit.ly link. 
+urlanom <- "anomalyData.csv"
+
+# Reads the url as a csv file.
+anomData <- read.csv(urlanom, header=TRUE)
+
+# View anomData.
+  # Remove # before str(anomData) to view anomData.
+#str(anomData)
+
+# Convert the ADATE into numeric YYYYMMDD format.
+anomData$ADATE <- as.Date(anomData$ADATE, format = "%m/%d/%Y")
+anomData$ADATE <- as.numeric(format(anomData$ADATE, "%Y%m%d"))
+
+# Remove blank values from the ORBIT variable. 
+anomData <- anomData[anomData$ORBIT != "", ]
+
+```
+
+## Creating anomOnly Dataset
+
+```{r}
+
+## Creating anomOnly dataset.  ##
+
+# Use the inner_join function to join SWData and anomData by ADATE. 
+combinedDataSet <- inner_join(SWData, anomData, by = "ADATE")
+
+# Split ATYPE and ADIAG into classes. 
+combinedDataSet$ATYPE <- as.factor(combinedDataSet$ATYPE)
+combinedDataSet$ADIAG <- as.factor(combinedDataSet$ADIAG)
+
+# View combinedDataSet.
+  # Remove # before str(combinedDataSet) to view data. 
+#str(combinedDataSet)
+
+# Select variables to keep for the final data set. 
+variablesToKeep <- c("ADATE","BIRD","ORBIT","ATYPE","ADIAG","ACOMMENT",
+                     "Kp","Ap","SN","F10.7obs","F10.7adj","D")
+
+# Selects the variables to keep from the combined data set.
+anomOnly <- select(combinedDataSet, variablesToKeep)
+
+# Covert ADATE back to date format. 
+anomOnly$ADATE <- as.Date(as.character(anomOnly$ADATE), format = "%Y%m%d")
+#write.csv(anomOnly, "anomOnly.csv")
+
+```
+
+## Creating anomAndNoAnom Dataset
+
+```{r}
+
+## Counting the number of anomalies that occurred in a specific date. ##
+
+# Create a new dataframe that groups anomData by ADATE and counts
+  # the frequency of a given date. 
+anomCounts <- anomData %>%
+  group_by(ADATE) %>%
+  summarise(anomalyCount = n())
+
+# Adds anomalyCount to anomAndNoAnom by matching ADATE. 
+anomAndNoAnom <- left_join(SWData, anomCounts, by = "ADATE")
+
+# If anomalyCount is NA, replace it with 0. 
+anomAndNoAnom$anomalyCount[is.na(anomAndNoAnom$anomalyCount)] <- 0
+
+# Creates new column that indicates if an anomaly occurred on a given date
+  # based off the value for anomalyCount. 
+anomAndNoAnom$AOccur <- ifelse(anomAndNoAnom$anomalyCount > 0, 1, 0)
+
+
+## Creating column that lists ATYPE and ADIAG for a specific date. 
+
+# Create new dataframe that groups ADATE and lists the ATYPE and ADIAG that 
+  # occurred on the given day. 
+# Option to add BIRD. 
+anom_summary <- anomData %>%
+  group_by(ADATE) %>%
+  summarise(
+    ATYPEList = paste(unique(ATYPE), collapse = ", "),
+    ADIAGList = paste(unique(ADIAG), collapse = ", "),
+    BIRDList = paste(unique(BIRD), collapse = ", "),
+    ORBITList = paste(unique(ORBIT), collapse = ", ")
+  )
+
+# Adds ATYPEList and ADIAGList to anomAndNoAnom by matching ADATE. 
+anomAndNoAnom <- left_join(anomAndNoAnom, anom_summary, by = "ADATE")
+
+# If there are NA is ATYPEList or ADIAGList, then change NA to None. 
+anomAndNoAnom$ATYPEList[is.na(anomAndNoAnom$ATYPEList)] <- "None"
+anomAndNoAnom$ADIAGList[is.na(anomAndNoAnom$ADIAGList)] <- "None"
+anomAndNoAnom$BIRDList[is.na(anomAndNoAnom$BIRDList)] <- "None"
+anomAndNoAnom$ORBITList[is.na(anomAndNoAnom$ORBITList)] <- "None"
+
+# Factor ATYPEList and ADIAGList. 
+anomAndNoAnom$ATYPEList <- factor(anomAndNoAnom$ATYPEList)
+anomAndNoAnom$ADIAGList <- factor(anomAndNoAnom$ADIAGList)
+anomAndNoAnom$BIRDList <- factor(anomAndNoAnom$BIRDList)
+anomAndNoAnom$ORBITList <- factor(anomAndNoAnom$ORBITList)
+
+
+
+# Select relevant columns. 
+anomAndNoAnom <- anomAndNoAnom[, -c(1:23)]
+
+# Covert ADATE back to YYYY/MM/DD format. 
+anomAndNoAnom$ADATE <- as.Date(as.character(anomAndNoAnom$ADATE),
+                               format = "%Y%m%d")
+
+
+# Select years from 1963 to 1994. 
+anomAndNoAnom <- anomAndNoAnom[format(anomAndNoAnom$ADATE, "%Y") >= 1963 & 
+                           format(anomAndNoAnom$ADATE, "%Y") <= 1994, ]
+
+# Sort by ADATE.
+anomAndNoAnom <- anomAndNoAnom[order(anomAndNoAnom$ADATE), ]
+
+# Re-order columns. 
+anomAndNoAnom <- anomAndNoAnom[, c(7,6,1,2,3,4,5,8,9,10,11,12,13)]
+
+# Create .csv file. 
+#write.csv(anomAndNoAnom, "dataSetWithAnomaliesAndNoAnomalies.csv")
+```
+
+# YJ Transformation
+
+```{r}
+library(VGAM)
+library(car)
+
+# Gets the optimal lambda value for the Yeo Johnson transformation. 
+KplabmdaResult <- powerTransform(anomAndNoAnom$Kp, family = "yjPower")
+AplabmdaResult <- powerTransform(anomAndNoAnom$Ap, family = "yjPower")
+SNlabmdaResult <- powerTransform(anomAndNoAnom$SN, family = "yjPower")
+F10obslabmdaResult <- powerTransform(anomAndNoAnom$F10.7obs,
+                                     family = "yjPower")
+F10adjlabmdaResult <- powerTransform(anomAndNoAnom$F10.7adj,
+                                     family = "yjPower")
+
+# Extract the lambda value. 
+KpLambda <- KplabmdaResult$lambda
+ApLambda <- AplabmdaResult$lambda
+SNLambda <- SNlabmdaResult$lambda
+F10obsLambda <- F10obslabmdaResult$lambda
+F10adjLambda <- F10adjlabmdaResult$lambda
+
+# Creates a new column for the Yeo Johnson transformation. 
+anomAndNoAnom$transformKp <- yjPower(anomAndNoAnom$Kp, KpLambda)
+anomAndNoAnom$transformAp <- yjPower(anomAndNoAnom$Ap, ApLambda)
+anomAndNoAnom$transformSN <- yjPower(anomAndNoAnom$SN, SNLambda)
+anomAndNoAnom$transformF10.7obs <- yjPower(anomAndNoAnom$F10.7obs,
+                                           F10obsLambda)
+anomAndNoAnom$transformF10.7adj <- yjPower(anomAndNoAnom$F10.7adj,
+                                           F10adjLambda)
+```
+
+# Exploration
+
+```{r}
+
+library(rcompanion)
+library(corrplot)
+library(ggplot2)
+
+# Plot correlation plot between predictors and YJ transformed predictors. 
+corrplot(cor(anomAndNoAnom[c(9,14,15,16,17,18)]),  method = "color",
+         type="upper", addCoef.col = "purple", number.cex = 1)
+corrplot(cor(anomAndNoAnom[c(2,3,4,5,6,9)]),  method = "color",
+         type="upper", addCoef.col = "purple", number.cex = 1)
+
+# Plot histogram of Ap index.
+plotNormalHistogram(anomAndNoAnom$Ap, main = "Distribution of the Ap Index",
+                    xlab = "Ap Index")
+
+# Plot box plot of Ap index and anomaly presence. 
+ggplot(data=anomAndNoAnom,aes(x=Ap,factor(AOccur))) +
+  geom_boxplot(fill="skyblue") +
+  labs(title="Ap Index Distribution by Anomaly Presence",
+       x="Ap Index",
+       y="AOccur") +
+  theme_bw()
+
+# Plot histogram of YJ transformed Ap index. 
+plotNormalHistogram(anomAndNoAnom$transformAp,
+                    main = "Distribution of the Yeo-Johnson
+                    Transformed Ap Index", 
+                    xlab = "Yeo-Johnson Transformed Ap Index")
+
+# Plot box plot of YJ transformed Ap index. 
+ggplot(data=anomAndNoAnom,aes(x=transformAp,factor(AOccur))) +
+  geom_boxplot(fill="skyblue") +
+  labs(title="Yeo-Johnson Transformed Ap Index Distribution by Anomaly Presence",
+       x="Yeo Johnson Transformed Ap Index",
+       y="AOccur") +
+  theme_bw()
+
+```
+
+# Findings
+
+## Creating training and testing set
+
+```{r}
+
+library(dplyr)
+library(caret)
+
+# Initializing seed. 
+set.seed(123)
+
+# Randomly choose row numbers.
+rows <- sample(1:nrow(anomAndNoAnom), 0.75 * nrow(anomAndNoAnom))
+
+# Create training and testing set. 
+trainingSet <- anomAndNoAnom[rows, ]
+testingSet <- anomAndNoAnom[-rows, ]
+
+```
+
+## Logistic Regression Model
+
+```{r}
+set.seed(123)
+
+# Create logistic model. 
+YJLogitModel <- glm(AOccur ~ Kp + transformSN,
+                    data = trainingSet, family = "binomial")
+
+# Print summary of logistic model. 
+summary(YJLogitModel)
+
+# Create new dataframe that adds model's prediction probability
+  # and classification to the testingSet.
+testingClassification <- testingSet %>%
+  mutate(anomProb = predict(YJLogitModel, newdata = testingSet,
+                            type = "response"),
+         anomClassification = ifelse(anomProb > 0.5, 1, 0))
+
+# Create confusion matrix. 
+confusionMatrix(factor(testingClassification$anomClassification),
+                factor(testingClassification$AOccur))
+```
+
+## Decision Tree Model
+
+```{r}
+
+set.seed(123)
+
+library(rpart)
+library(rpart.plot)
+library(tree)
+
+# Create decision tree model. 
+tree_model <- rpart(AOccur ~ Kp + transformSN,
+                    data = trainingSet, method = "anova")
+
+# Plot decision tree. 
+rpart.plot(tree_model)
+
+# Create new dataframe that adds model's prediction probability
+  # and classification to the testingSet.
+testingClassification <- testingSet %>%
+  mutate(anomProb = predict(tree_model, newdata = testingSet),
+         anomClassification = ifelse(anomProb >= 0.5, 1, 0))
+
+# Creates confusion matrix. 
+confusionMatrix(factor(testingClassification$anomClassification, levels = c(0, 1)), 
+                factor(testingSet$AOccur, levels = c(0, 1)))
+
+
+```
+
+## Random Forest Model
+
+```{r}
+
+set.seed(123)
+
+library(randomForest)
+
+# Create random forest model with 1,000 trees. 
+rf_model <- randomForest(factor(AOccur) ~ Kp + transformSN,
+                         data = trainingSet, ntree = 1000)
+
+# Create new dataframe that adds model's prediction probability
+  # and classification to the testingSet.
+testingClassification <- testingSet %>%
+  mutate(anomClassification = predict(rf_model, newdata = testingSet,
+                                      type = "response"),
+         anomProb = predict(rf_model, newdata = testingSet, type = "prob"))
+
+# Get model's probability of predicting binary values. 
+testingClassification$'0' <- testingClassification$anomProb[,1]
+testingClassification$'1' <- testingClassification$anomProb[,2]
+
+# Get the highest probability from the model's probability.
+testingClassification$prob <- pmax(testingClassification[,21],
+                                   testingClassification[,22])
+
+# Print confusion matrix. 
+confusionMatrix(factor(testingClassification$anomClassification),
+                factor(testingClassification$AOccur))
+
+# Print random forest plot. 
+plot(rf_model, main = "CER vs. Number of Trees")
+```
+
+
+
+# Diagnostics
+
+```{r}
+set.seed(123)
+library(car)
+
+# Test for independence. 
+durbinWatsonTest(YJLogitModel)
+
+# Test for multicollinearity. 
+corrplot(cor(anomAndNoAnom[c(2,16)]),  method = "color", type="upper",
+         addCoef.col = "purple", number.cex = 1)
+
+# Test for linearity. 
+crPlots(YJLogitModel)
+```
